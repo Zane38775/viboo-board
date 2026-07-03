@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VIBOO 用户调研看板 · 多人实时版</title>
+<!--
+============================================================
+配置只需 2 个值(见下方 SUPABASE_URL / SUPABASE_ANON_KEY):
+1. 去 supabase.com 注册,New project(免费)。
+2. 项目 → SQL Editor → 粘贴 VIBOO_看板_建表.sql → Run。
+3. 项目 → Settings → API → 复制 Project URL 和 anon public key,
+   填到下面两行引号里,保存。
+4. 把这个 html 发给 5 个人,各自打开即可实时共用。
+============================================================
+-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --coral:#F0563A; --dark:#161616; --gold:#C9922B; --green:#2E7D46;
+    --blue:#1F5FA8; --purple:#6A3FA0; --red:#B3261E; --gray:#8A8A8A;
+    --bg:#f6f6f4; --panel:#ffffff; --line:#e4e4e0; --muted:#777;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",Arial,sans-serif;
+    background:var(--bg);color:var(--dark);font-size:14px;line-height:1.5}
+  header{background:var(--dark);color:#fff;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+  header h1{margin:0;font-size:20px;font-weight:700}
+  header .sub{margin-top:4px;font-size:12.5px;color:#bdbdbd}
+  #status{font-size:12px;padding:5px 12px;border-radius:20px;background:#333;color:#eee}
+  #status.ok{background:#1e4d2b;color:#c9f0d4}
+  #status.err{background:#5a1e1a;color:#f3c9c4}
+  .wrap{padding:18px 24px;max-width:1500px;margin:0 auto}
+  .section-title{font-size:13px;font-weight:700;letter-spacing:.04em;color:#444;text-transform:uppercase;margin:6px 0 10px;display:flex;align-items:center;gap:8px}
+  .section-title::before{content:"";width:14px;height:14px;background:var(--coral);border-radius:3px;display:inline-block}
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:6px}
+  .metric{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .metric .lab{font-size:12.5px;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+  .metric .val{font-size:26px;font-weight:800;margin:6px 0 2px}
+  .metric .val input{width:64px;font-size:24px;font-weight:800;border:none;border-bottom:2px solid var(--line);background:transparent;color:var(--dark);text-align:left;font-family:inherit}
+  .metric .val input:focus{outline:none;border-color:var(--coral)}
+  .metric .tgt{font-size:12px;color:var(--muted)}
+  .bar{height:8px;background:#eee;border-radius:6px;margin-top:9px;overflow:hidden}
+  .bar > span{display:block;height:100%;background:var(--coral);border-radius:6px;transition:width .3s}
+  .loops{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:6px}
+  .loop{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;cursor:pointer;position:relative;transition:.15s}
+  .loop:hover{border-color:var(--coral)}
+  .loop.active{border-color:var(--coral);box-shadow:0 0 0 2px rgba(240,86,58,.18)}
+  .loop .lid{font-size:12px;font-weight:800;color:var(--coral)}
+  .loop .lname{font-size:13.5px;font-weight:700;margin:2px 0}
+  .loop .lweek{font-size:11.5px;color:var(--muted)}
+  .loop .lhypo{font-size:12px;margin-top:8px;color:#333}
+  .loop .llearn{font-size:11.5px;margin-top:6px;color:var(--green)}
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 12px}
+  .toolbar .chip{font-size:12px;padding:5px 11px;border-radius:20px;border:1px solid var(--line);background:#fff;cursor:pointer;user-select:none}
+  .toolbar .chip.on{background:var(--dark);color:#fff;border-color:var(--dark)}
+  .spacer{flex:1}
+  button.btn{font-family:inherit;font-size:12.5px;border:1px solid var(--line);background:#fff;padding:6px 12px;border-radius:8px;cursor:pointer}
+  button.btn.primary{background:var(--coral);color:#fff;border-color:var(--coral);font-weight:600}
+  button.btn:hover{filter:brightness(.97)}
+  .board{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:start}
+  .col{background:#efefec;border-radius:12px;padding:10px;min-height:120px}
+  .col.drag{outline:2px dashed var(--coral);outline-offset:-4px}
+  .col h3{margin:2px 4px 10px;font-size:13px;display:flex;justify-content:space-between;align-items:center}
+  .col h3 .cnt{font-size:11.5px;color:var(--muted);font-weight:600}
+  .col.doing h3 .cnt.over{color:var(--red)}
+  .card{background:#fff;border:1px solid var(--line);border-left:4px solid var(--gray);border-radius:9px;padding:9px 10px;margin-bottom:9px;cursor:grab;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .card:active{cursor:grabbing}
+  .card.done{opacity:.6}
+  .card .ct{font-size:13px;font-weight:600;line-height:1.35}
+  .card.done .ct{text-decoration:line-through}
+  .card .note{font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.4}
+  .card .meta{display:flex;gap:6px;align-items:center;margin-top:7px;flex-wrap:wrap}
+  .tag{font-size:10.5px;padding:2px 7px;border-radius:20px;color:#fff;font-weight:600}
+  .tag.loop{background:#555}
+  .tag.doc{background:#0a7d66;cursor:pointer;text-decoration:none}
+  .tag.doc:hover{filter:brightness(1.1)}
+  .card .x{float:right;color:#bbb;cursor:pointer;font-size:14px;line-height:1;margin-left:6px}
+  .card .x:hover{color:var(--red)}
+  .resp{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:8px}
+  .resp .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .resp h4{margin:0 0 8px;font-size:13px}
+  .resp .row{font-size:12.5px;padding:4px 0;border-bottom:1px dashed var(--line);display:flex;gap:8px;align-items:center}
+  .resp .row:last-child{border-bottom:none}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
+  footer{padding:16px 24px;color:var(--muted);font-size:12px}
+  .banner{background:#fff4e5;border:1px solid #f0c98a;color:#8a5a12;padding:12px 16px;border-radius:10px;margin-bottom:16px;font-size:13px;line-height:1.6;display:none}
+  .banner.show{display:block}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal.on{display:flex}
+  .modal .m{background:#fff;border-radius:14px;padding:20px;width:400px;max-width:92vw}
+  .modal h3{margin:0 0 14px;font-size:16px}
+  .modal label{font-size:12px;color:var(--muted);display:block;margin:10px 0 4px}
+  .modal input,.modal select{width:100%;font-family:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
+  .modal .actions{display:flex;gap:10px;margin-top:18px}
+  @media(max-width:1100px){.metrics{grid-template-columns:repeat(2,1fr)}.loops{grid-template-columns:repeat(2,1fr)}.board{grid-template-columns:1fr}.resp{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>VIBOO · 用户调研看板 <span style="font-weight:400;font-size:14px;color:#bdbdbd">| 多人实时版</span></h1>
+    <div class="sub">5 人共用 · 改动实时同步 · 数据存云端(Supabase)</div>
+  </div>
+  <span id="status">连接中…</span>
+</header>
+
+<div class="wrap">
+  <div class="banner" id="banner"></div>
+
+  <div class="section-title">目标进度(点数字可改当前值)</div>
+  <div class="metrics" id="metrics"></div>
+
+  <div class="section-title" style="margin-top:20px">Build–Measure–Learn 循环时间线(点击可只看该循环的卡)</div>
+  <div class="loops" id="loops"></div>
+
+  <div class="section-title" style="margin-top:20px">Kanban 看板(拖动卡片换列 · 点卡片编辑)</div>
+  <div class="toolbar">
+    <span style="font-size:12px;color:var(--muted)">按负责人筛选:</span>
+    <span id="ownerChips"></span>
+    <span class="spacer"></span>
+    <button class="btn primary" onclick="openAdd()">+ 新增卡片</button>
+    <button class="btn" onclick="refresh()">刷新</button>
+  </div>
+  <div class="board" id="board"></div>
+
+  <div class="section-title" style="margin-top:22px">两层责任(为什么不是"全靠自觉")</div>
+  <div class="resp">
+    <div class="box">
+      <h4>第一层 · 结果责任(指派死的)</h4>
+      <div id="respOwners"></div>
+    </div>
+    <div class="box">
+      <h4>第二层 · 任务拉动(灵活)</h4>
+      <div class="row">① 一张卡被谁拖走,就是谁负责推到"完成"——认领即负责。</div>
+      <div class="row">② 通常在自己这条线内拉;做完自己拉下一张,不靠派活。</div>
+      <div class="row">③ 「进行中」有 WIP 上限,超了标红,防一人囤活。</div>
+      <div class="row">④ 没人拉的卡卡在待办 → 轨负责人在周一站会重新指派或自己扛。</div>
+    </div>
+  </div>
+</div>
+
+<footer>循环节奏:每 2 周一个 BML 循环 · 周一站会看板走查 · 周五 Learn 复盘定 persevere / pivot</footer>
+
+<div class="modal" id="modal">
+  <div class="m">
+    <h3 id="mTitle">新增卡片</h3>
+    <label>任务</label>
+    <input id="mText" placeholder="例如:发 r/DJs 帖 / 约 5 场访谈" />
+    <label>任务文档链接(粘贴共享文档链接,所有人可看)</label>
+    <input id="mDoc" placeholder="https://…(留空则不显示文档按钮)" />
+    <label>备注(可选)</label>
+    <input id="mNote" placeholder="简短说明" />
+    <label>负责人</label>
+    <select id="mOwner"></select>
+    <label>所属循环</label>
+    <select id="mLoop"></select>
+    <label>所在列</label>
+    <select id="mCol"></select>
+    <div class="actions">
+      <button class="btn primary" style="flex:1" onclick="saveCard()">保存</button>
+      <button class="btn" id="mDelete" onclick="deleteCard()">删除</button>
+      <button class="btn" onclick="closeModal()">取消</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==================== 填这两个值 ====================
+const SUPABASE_URL      = "https://vrdpdjjxwydipaojkqee.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyZHBkamp4d3lkaXBhb2prcWVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwNzgwMjMsImV4cCI6MjA5ODY1NDAyM30._fIm0fAKUJfO65PrF5Ahz31XhMi5kp5QKHdljccAkes";
+// ===================================================
+
+const OWNERS = {
+  "Julia":{c:"var(--coral)"}, "Travis":{c:"var(--blue)"}, "Caroline":{c:"var(--green)"},
+  "Zane":{c:"var(--purple)"}, "Alan":{c:"var(--gold)"}, "全员":{c:"var(--gray)"},
+};
+const COLS = [
+  {id:"backlog",name:"待办池"},{id:"todo",name:"本周 To Do"},{id:"doing",name:"进行中 Doing"},
+  {id:"blocked",name:"卡住 Blocked"},{id:"done",name:"完成 Done"},
+];
+const WIP = 5;
+const LOOPS = [
+  {id:"L0",name:"触达可行",weeks:"W0–1 · 7/3–7/13",hypo:"我们够得到目标主人,且他们愿意聊",learn:"渠道/话术通,拿到初步痛点信号"},
+  {id:"L1",name:"痛点存在",weeks:"W2–3 · 7/14–7/27",hypo:"主人在气氛/音乐/灯光上有真实痛点",learn:"哪些痛点/功能反复出现"},
+  {id:"L2",name:"楔子成立",weeks:"W4–5 · 7/28–8/10",hypo:"某 1–2 功能是楔子,$349 可接受",learn:"锁定楔子候选(定义 v0)"},
+  {id:"L3",name:"愿意付费",weeks:"W6–7 · 8/11–8/24",hypo:"用户愿意为这个楔子掏钱",learn:"付费意愿是否为真"},
+  {id:"W8",name:"收束定稿",weeks:"W8 · 8/25–8/31",hypo:"证据足够做 Go/Pivot/Kill",learn:"《已验证产品定义》定稿 → Stage-Gate"},
+];
+const RESP = [
+  ["Julia","需求验证轨结果 + 产品定义拍板"],["Travis","名单 / 落地页 / 定金 的数字"],
+  ["Caroline","访谈管道吞吐(约人·记录·归集)"],["Zane","技术轨:demo 炸场 + 方案(另一条轨)"],
+];
+const METRIC_ORDER = ["interviews","waitlist","deposits","demos"];
+
+let db = null, state = {cards:[], metrics:{}}, filterLoop=null, filterOwner=null, editingId=null;
+
+function setStatus(t,cls){ const s=document.getElementById("status"); s.textContent=t; s.className=cls||""; }
+function showBanner(html){ const b=document.getElementById("banner"); b.innerHTML=html; b.classList.add("show"); }
+
+function initDb(){
+  if(SUPABASE_URL.indexOf("你的")>=0 || SUPABASE_ANON_KEY.indexOf("你的")>=0){
+    setStatus("未配置","err");
+    showBanner("⚠️ 还没填云端地址。请打开本文件顶部,把 <b>SUPABASE_URL</b> 和 <b>SUPABASE_ANON_KEY</b> 两个值填上(见文件开头注释的 4 步),保存后刷新。");
+    return false;
+  }
+  try{ db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); return true; }
+  catch(e){ setStatus("连接失败","err"); showBanner("连接失败:"+e.message); return false; }
+}
+
+async function refresh(){
+  if(!db) return;
+  try{
+    const [c,m] = await Promise.all([
+      db.from("cards").select("*").order("id"),
+      db.from("metrics").select("*").order("ord"),
+    ]);
+    if(c.error) throw c.error; if(m.error) throw m.error;
+    state.cards = c.data||[];
+    state.metrics = {}; (m.data||[]).forEach(x=> state.metrics[x.key]=x);
+    setStatus("● 已连接","ok");
+    renderAll();
+  }catch(e){
+    setStatus("读取失败","err");
+    showBanner("读取数据失败:"+(e.message||e)+"<br>可能是 SQL 没跑、key 填错,或网络访问不到 Supabase(内地可能不稳)。");
+  }
+}
+
+/* ---------- render ---------- */
+function renderMetrics(){
+  const box=document.getElementById("metrics");
+  box.innerHTML = METRIC_ORDER.map(k=>{
+    const m=state.metrics[k]; if(!m) return "";
+    const pct=Math.min(100,Math.round(m.cur/m.target*100));
+    return `<div class="metric">
+      <div class="lab"><span>${m.label}</span><span class="tgt">目标 ${m.target}</span></div>
+      <div class="val"><input type="number" min="0" value="${m.cur}" onchange="setMetric('${k}',this.value)"> <span style="font-size:15px;color:#aaa">/ ${m.target}</span></div>
+      <div class="bar"><span style="width:${pct}%"></span></div>
+    </div>`;
+  }).join("");
+}
+async function setMetric(k,v){
+  const val=Math.max(0,parseInt(v)||0);
+  if(state.metrics[k]) state.metrics[k].cur=val;
+  renderMetrics();
+  await db.from("metrics").update({cur:val}).eq("key",k);
+}
+
+function renderLoops(){
+  document.getElementById("loops").innerHTML = LOOPS.map(L=>{
+    const act=filterLoop===L.id?"active":"";
+    return `<div class="loop ${act}" onclick="toggleLoop('${L.id}')">
+      <div class="lid">${L.id}</div><div class="lname">${L.name}</div>
+      <div class="lweek">${L.weeks}</div>
+      <div class="lhypo"><b>假设:</b>${L.hypo}</div>
+      <div class="llearn">✓ 学到:${L.learn}</div>
+    </div>`;
+  }).join("");
+}
+function toggleLoop(id){ filterLoop=filterLoop===id?null:id; renderLoops(); renderBoard(); }
+
+function renderOwnerChips(){
+  document.getElementById("ownerChips").innerHTML = Object.keys(OWNERS).map(o=>
+    `<span class="chip ${filterOwner===o?'on':''}" onclick="toggleOwner('${o}')">${o}</span>`).join(" ");
+}
+function toggleOwner(o){ filterOwner=filterOwner===o?null:o; renderOwnerChips(); renderBoard(); }
+
+function renderBoard(){
+  document.getElementById("board").innerHTML = COLS.map(col=>{
+    let cards=state.cards.filter(c=>c.col===col.id);
+    if(filterLoop) cards=cards.filter(c=>c.loop===filterLoop);
+    if(filterOwner) cards=cards.filter(c=>c.owner===filterOwner);
+    const isDoing=col.id==="doing", over=isDoing&&cards.length>WIP;
+    const cnt = isDoing?`<span class="cnt ${over?'over':''}">${cards.length} / ${WIP}${over?' 超载':''}</span>`:`<span class="cnt">${cards.length}</span>`;
+    return `<div class="col ${col.id}" data-col="${col.id}" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="drop(event)">
+      <h3>${col.name}${cnt}</h3>${cards.map(cardHTML).join("")}</div>`;
+  }).join("");
+}
+function cardHTML(c){
+  const col=OWNERS[c.owner]?OWNERS[c.owner].c:"var(--gray)";
+  const done=c.col==="done"?"done":"";
+  const docChip=c.doc?`<span class="tag doc" onclick="openDoc(event,${c.id})">📄 文档</span>`:"";
+  const note=c.note?`<div class="note">${esc(c.note)}</div>`:"";
+  return `<div class="card ${done}" draggable="true" style="border-left-color:${col}" ondragstart="dragStart(event,${c.id})" onclick="openEdit(${c.id})">
+    <span class="x" onclick="event.stopPropagation();quickDelete(${c.id})">&times;</span>
+    <div class="ct">${esc(c.text)}</div>${note}
+    <div class="meta"><span class="tag" style="background:${col}">${c.owner}</span><span class="tag loop">${c.loop}</span>${docChip}</div>
+  </div>`;
+}
+function renderResp(){
+  document.getElementById("respOwners").innerHTML = RESP.map(([o,d])=>{
+    const c=OWNERS[o]?OWNERS[o].c:"var(--gray)";
+    return `<div class="row"><span class="dot" style="background:${c}"></span><b>${o}</b> — ${d}</div>`;
+  }).join("");
+}
+function renderAll(){ renderMetrics(); renderLoops(); renderOwnerChips(); renderBoard(); renderResp(); }
+
+/* ---------- drag & drop ---------- */
+let dragId=null;
+function dragStart(e,id){ dragId=id; e.dataTransfer.effectAllowed="move"; }
+function dragOver(e){ e.preventDefault(); e.currentTarget.classList.add("drag"); }
+function dragLeave(e){ e.currentTarget.classList.remove("drag"); }
+async function drop(e){
+  e.preventDefault(); e.currentTarget.classList.remove("drag");
+  const col=e.currentTarget.dataset.col, c=state.cards.find(x=>x.id===dragId);
+  if(c && c.col!==col){ c.col=col; renderBoard(); await db.from("cards").update({col}).eq("id",dragId); }
+  dragId=null;
+}
+
+/* ---------- modal ---------- */
+function fillSelects(){
+  document.getElementById("mOwner").innerHTML=Object.keys(OWNERS).map(o=>`<option>${o}</option>`).join("");
+  document.getElementById("mLoop").innerHTML=LOOPS.map(l=>`<option value="${l.id}">${l.id} · ${l.name}</option>`).join("");
+  document.getElementById("mCol").innerHTML=COLS.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+}
+function openAdd(){
+  editingId=null;
+  document.getElementById("mTitle").textContent="新增卡片";
+  document.getElementById("mText").value=""; document.getElementById("mDoc").value=""; document.getElementById("mNote").value="";
+  document.getElementById("mOwner").value="全员";
+  document.getElementById("mLoop").value=(filterLoop||"L0");
+  document.getElementById("mCol").value="todo";
+  document.getElementById("mDelete").style.display="none";
+  document.getElementById("modal").classList.add("on");
+}
+function openEdit(id){
+  const c=state.cards.find(x=>x.id===id); if(!c)return;
+  editingId=id;
+  document.getElementById("mTitle").textContent="编辑卡片";
+  document.getElementById("mText").value=c.text;
+  document.getElementById("mDoc").value=c.doc||""; document.getElementById("mNote").value=c.note||"";
+  document.getElementById("mOwner").value=c.owner; document.getElementById("mLoop").value=c.loop; document.getElementById("mCol").value=c.col;
+  document.getElementById("mDelete").style.display="block";
+  document.getElementById("modal").classList.add("on");
+}
+async function saveCard(){
+  const text=document.getElementById("mText").value.trim(); if(!text)return;
+  const row={ text, doc:document.getElementById("mDoc").value.trim(), note:document.getElementById("mNote").value.trim(),
+    owner:document.getElementById("mOwner").value, loop:document.getElementById("mLoop").value, col:document.getElementById("mCol").value };
+  closeModal();
+  if(editingId){ await db.from("cards").update(row).eq("id",editingId); }
+  else{ await db.from("cards").insert(row); }
+  refresh();
+}
+async function deleteCard(){ if(editingId){ const id=editingId; closeModal(); await db.from("cards").delete().eq("id",id); refresh(); } }
+async function quickDelete(id){ await db.from("cards").delete().eq("id",id); refresh(); }
+function closeModal(){ document.getElementById("modal").classList.remove("on"); }
+function openDoc(e,id){ e.stopPropagation(); const c=state.cards.find(x=>x.id===id); if(c&&c.doc){ let u=c.doc; if(!/^https?:\/\//i.test(u)) u="https://"+u; window.open(u,"_blank"); } }
+function esc(s){ return (s||"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+
+/* ---------- boot ---------- */
+fillSelects();
+if(initDb()){
+  refresh();
+  db.channel("board")
+    .on("postgres_changes",{event:"*",schema:"public",table:"cards"}, refresh)
+    .on("postgres_changes",{event:"*",schema:"public",table:"metrics"}, refresh)
+    .subscribe();
+}
+document.getElementById("modal").addEventListener("click",e=>{ if(e.target.id==="modal") closeModal(); });
+</script>
+</body>
+</html>
